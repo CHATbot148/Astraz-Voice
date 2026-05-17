@@ -1,0 +1,6 @@
+{
+  "name": "Aura Voice",
+  "description": "High-fidelity AI voice assistant with real-time transcription and translation powered by Gemini Multimodal Live.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
