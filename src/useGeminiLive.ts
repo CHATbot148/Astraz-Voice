@@ -50,94 +50,129 @@ export function useGeminiLive() {
   }, []);
 
   const connect = useCallback(async (config: { systemInstruction: string; voiceName: string }) => {
-    try {
-      setStatus('connecting');
-      clearState();
+    let retryCount = 0;
+    const maxRetries = 3;
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.host}/api/live`);
-      wsRef.current = ws;
+    const establishConnection = () => {
+        try {
+          setStatus('connecting');
+          setError(null);
 
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ 
-          type: 'setup', 
-          systemInstruction: config.systemInstruction,
-          voiceName: config.voiceName 
-        }));
-      };
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const ws = new WebSocket(`${protocol}//${window.location.host}/api/live`);
+          wsRef.current = ws;
 
-      ws.onmessage = async (event) => {
-        const msg = JSON.parse(event.data);
+          ws.onopen = () => {
+            ws.send(JSON.stringify({ 
+              type: 'setup', 
+              systemInstruction: config.systemInstruction,
+              voiceName: config.voiceName 
+            }));
+            retryCount = 0; // Reset retries on success
+          };
 
-        // Handle connection success
-        if (msg.type === 'connected') {
-          setStatus('connected');
-          startAudioCapture();
-          return;
-        }
+          ws.onmessage = async (event) => {
+            const msg = JSON.parse(event.data);
 
-        // Handle error
-        if (msg.type === 'error') {
-          setError(msg.message);
+            // Handle connection success
+            if (msg.type === 'connected') {
+              setStatus('connected');
+              startAudioCapture();
+              return;
+            }
+
+            // Handle error
+            if (msg.type === 'error') {
+              console.error("Gemini Live Error:", msg.message);
+              setError(msg.message);
+              // Handle specific "stream error" or quota issues
+              if (msg.message.toLowerCase().includes('quota') || msg.message.toLowerCase().includes('limit')) {
+                  setStatus('error');
+              } else {
+                  // For transient errors, we might stay connected or try to reconnect
+                  // If it's a critical stream error, we might need to reset
+                  if (msg.message === 'stream error') {
+                     console.warn("Transient stream error detected.");
+                  }
+              }
+              return;
+            }
+
+            // Handle Audio
+            if (msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
+              playAudioChunk(msg.serverContent.modelTurn.parts[0].inlineData.data);
+            }
+
+            // Handle Interruption (Server-side VAD)
+            if (msg.serverContent?.interrupted) {
+              stopAllPlayback();
+            }
+
+            // Handle Transcription
+            if (msg.serverContent?.modelTurn?.parts?.[0]?.text) {
+               updateTranscript('model', msg.serverContent.modelTurn.parts[0].text, false);
+            }
+
+            if (msg.serverContent?.modelTurn?.audioTranscription?.text) {
+               updateTranscript('model', msg.serverContent.modelTurn.audioTranscription.text, true);
+            }
+
+            if (msg.serverContent?.userTurn?.audioTranscription?.text) {
+               updateTranscript('user', msg.serverContent.userTurn.audioTranscription.text, true);
+            }
+          };
+
+          ws.onclose = (event) => {
+            console.log("WebSocket closed:", event.code, event.reason);
+            if (status !== 'idle' && retryCount < maxRetries) {
+                retryCount++;
+                console.log(`Reconnecting... attempt ${retryCount}`);
+                setTimeout(establishConnection, 1000 * retryCount);
+            } else {
+                setStatus('idle');
+                cleanup();
+            }
+          };
+
+          ws.onerror = (err) => {
+            console.error("WebSocket error:", err);
+            setError('Neural link interrupted. Attempting to restore...');
+            // onclose will handle retry
+          };
+
+        } catch (err: any) {
+          setError(err.message);
           setStatus('error');
-          return;
         }
+    };
 
-        // Handle Audio
-        if (msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
-          playAudioChunk(msg.serverContent.modelTurn.parts[0].inlineData.data);
-        }
-
-        // Handle Interruption
-        if (msg.serverContent?.interrupted) {
-          stopAllPlayback();
-        }
-
-        // Handle Transcription
-        if (msg.serverContent?.modelTurn?.parts?.[0]?.text) {
-           updateTranscript('model', msg.serverContent.modelTurn.parts[0].text, false);
-        }
-
-        if (msg.serverContent?.modelTurn?.audioTranscription?.text) {
-           updateTranscript('model', msg.serverContent.modelTurn.audioTranscription.text, true);
-        }
-
-        if (msg.serverContent?.userTurn?.audioTranscription?.text) {
-           updateTranscript('user', msg.serverContent.userTurn.audioTranscription.text, true);
-        }
-      };
-
-      ws.onclose = () => {
-        setStatus('idle');
-        cleanup();
-      };
-
-      ws.onerror = () => {
-        setError('WebSocket error');
-        setStatus('error');
-      };
-
-    } catch (err: any) {
-      setError(err.message);
-      setStatus('error');
-    }
-  }, [clearState]);
+    establishConnection();
+  }, [clearState, status]);
 
   const disconnect = useCallback(() => {
-    if (wsRef.current) wsRef.current.close();
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close();
+    }
     cleanup();
     setStatus('idle');
   }, []);
 
   const cleanup = () => {
+    if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
+            wsRef.current.close();
+        }
+        wsRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
     }
     if (processorRef.current) {
       processorRef.current.disconnect();
     }
-    if (audioCtxRef.current) {
-       // Only close if it exists
+    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
        try { audioCtxRef.current.close(); } catch(e) {}
     }
     audioCtxRef.current = null;
@@ -177,7 +212,14 @@ export function useGeminiLive() {
         // Track input volume
         userAnalyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((p, c) => p + c, 0) / dataArray.length;
-        setUserVolume(avg / 160);
+        const vol = avg / 160;
+        setUserVolume(vol);
+
+        // Local Interruption: If user starts speaking while model is speaking, stop playback
+        if (vol > 0.12 && modelVolume > 0.03) {
+            stopAllPlayback();
+            // We also notify the server if possible, but sending audio is usually enough to trigger server VAD
+        }
 
         if (isMutedRef.current) {
           // console.debug("Audio capture skipped (muted)");

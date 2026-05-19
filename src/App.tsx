@@ -39,7 +39,7 @@ export default function App() {
   const handleStartCall = () => {
     const langName = LANGUAGES.find(l => l.code === targetLang)?.name || 'English';
     const systemInstruction = `
-      You are Aura, a sophisticated AI voice persona.
+      You are Astraz, a sophisticated AI voice persona.
       Aesthetics: Modern, professional, concise.
       Role: Real-time translator and assistant.
       User's preferred output language: ${langName}.
@@ -62,7 +62,7 @@ export default function App() {
             <div className="flex items-center gap-3">
               <Command className="w-6 h-6 text-slate-900" />
               <div>
-                <h1 className="text-lg font-black tracking-tight text-slate-900 uppercase">Aura</h1>
+                <h1 className="text-lg font-black tracking-tight text-slate-900 uppercase">Astraz</h1>
                 <div className="flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${status === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
@@ -113,34 +113,24 @@ export default function App() {
              </AnimatePresence>
 
              <AnimatePresence mode="wait">
-               {status === 'idle' || status === 'connecting' ? (
+               {status === 'idle' ? (
                  <motion.div 
                    key="idle-view"
-                   initial={{ opacity: 0, y: 20 }}
-                   animate={{ opacity: 1, y: 0 }}
-                   exit={{ opacity: 0 }}
+                   initial={{ opacity: 0, scale: 0.95 }}
+                   animate={{ opacity: 1, scale: 1 }}
+                   exit={{ opacity: 0, scale: 1.05 }}
                    className="flex flex-col items-center gap-8 text-center relative z-10 max-w-sm px-6"
                  >
                    <div className="space-y-4">
                      <h2 className="text-4xl font-black tracking-tight text-slate-900 leading-[0.9]">Transformative Voice.</h2>
-                     <p className="text-slate-500 text-sm font-medium">Connect with Aura in real-time. Native understanding across multiple languages with zero latency.</p>
+                     <p className="text-slate-500 text-sm font-medium">Connect with Astraz in real-time. Native understanding across multiple languages with zero latency.</p>
                    </div>
                    <button 
                      onClick={handleStartCall}
-                     disabled={status === 'connecting'}
-                     className="bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 transform transition-all active:scale-95 text-white px-12 py-5 rounded-full font-black text-xs tracking-[0.2em] uppercase shadow-2xl shadow-indigo-200 mt-4 flex items-center gap-3"
+                     className="bg-slate-900 hover:bg-slate-800 transform transition-all active:scale-95 text-white px-12 py-5 rounded-full font-black text-xs tracking-[0.2em] uppercase shadow-2xl shadow-indigo-200 mt-4 flex items-center gap-3"
                    >
-                     {status === 'connecting' ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Booting Stream
-                        </>
-                     ) : (
-                        <>
-                          <Phone className="w-4 h-4 fill-current mr-2" />
-                          Initiate Session
-                        </>
-                     )}
+                     <Phone className="w-4 h-4 fill-current mr-2" />
+                     Initiate Session
                    </button>
                  </motion.div>
                ) : (
@@ -148,14 +138,24 @@ export default function App() {
                     key="active-view"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
+                    exit={{ opacity: 0, transition: { duration: 1.5 } }}
                     className="w-full h-full flex flex-col items-center justify-center relative z-10"
                  >
+                    {status === 'connecting' && (
+                        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center pointer-events-none">
+                            <div className="relative w-24 h-24 mb-6">
+                                <div className="absolute inset-0 border-4 border-white/10 rounded-full"></div>
+                                <div className="absolute inset-0 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div>
+                            </div>
+                            <p className="text-white font-black text-xs tracking-[0.3em] uppercase animate-pulse">Establishing Neural Link</p>
+                        </div>
+                    )}
                     <div className="w-full h-full max-w-5xl max-h-[85vh] relative flex items-center justify-center">
                         <VoiceOrb 
                             userVolume={userVolume}
                             modelVolume={modelVolume}
                             isMuted={isMuted} 
+                            status={status}
                          />
                     </div>
                  </motion.div>
