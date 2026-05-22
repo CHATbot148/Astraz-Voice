@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { pcmToBase64, base64ToFloat32 } from './lib/audio-utils';
+import { playInitiatedSound, playMutedSound } from './lib/soundEffects';
+import { detectTerminationIntent } from './lib/intent';
 
 export interface Transcript {
   id: string;
@@ -24,6 +26,7 @@ export function useGeminiLive() {
                 track.enabled = !newState;
             });
         }
+        playMutedSound(newState);
         return newState;
     });
   }, []);
@@ -49,7 +52,7 @@ export function useGeminiLive() {
     setModelVolume(0);
   }, []);
 
-  const connect = useCallback(async (config: { systemInstruction: string; voiceName: string }) => {
+  const connect = useCallback(async (config: { systemInstruction: string; voiceName: string; onTerminationTriggered?: () => void }) => {
     let retryCount = 0;
     const maxRetries = 3;
 
@@ -78,6 +81,7 @@ export function useGeminiLive() {
             if (msg.type === 'connected') {
               setStatus('connected');
               startAudioCapture();
+              playInitiatedSound();
               return;
             }
 
@@ -110,15 +114,55 @@ export function useGeminiLive() {
 
             // Handle Transcription
             if (msg.serverContent?.modelTurn?.parts?.[0]?.text) {
-               updateTranscript('model', msg.serverContent.modelTurn.parts[0].text, false);
+               const text = msg.serverContent.modelTurn.parts[0].text;
+               updateTranscript('model', text, false);
+
+               const lowerText = text.toLowerCase().trim();
+               if (config.onTerminationTriggered && (
+                 lowerText.includes("goodbye") || 
+                 lowerText.includes("terminating session") || 
+                 lowerText.includes("terminating") ||
+                 lowerText.includes("session ended") ||
+                 lowerText.includes("oda bo") ||
+                 lowerText.includes("odabo") ||
+                 lowerText.includes("mechie oku") ||
+                 lowerText.includes("adios") ||
+                 lowerText.includes("au revoir")
+               )) {
+                   console.log("WebSocket model-level termination triggered:", text);
+                   config.onTerminationTriggered();
+               }
             }
 
             if (msg.serverContent?.modelTurn?.audioTranscription?.text) {
-               updateTranscript('model', msg.serverContent.modelTurn.audioTranscription.text, true);
+               const text = msg.serverContent.modelTurn.audioTranscription.text;
+               updateTranscript('model', text, true);
+
+               const lowerText = text.toLowerCase().trim();
+               if (config.onTerminationTriggered && (
+                 lowerText.includes("goodbye") || 
+                 lowerText.includes("terminating session") || 
+                 lowerText.includes("terminating") ||
+                 lowerText.includes("session ended") ||
+                 lowerText.includes("oda bo") ||
+                 lowerText.includes("odabo") ||
+                 lowerText.includes("mechie oku") ||
+                 lowerText.includes("adios") ||
+                 lowerText.includes("au revoir")
+               )) {
+                   console.log("WebSocket model-level audio transcription termination triggered:", text);
+                   config.onTerminationTriggered();
+               }
             }
 
             if (msg.serverContent?.userTurn?.audioTranscription?.text) {
-               updateTranscript('user', msg.serverContent.userTurn.audioTranscription.text, true);
+               const text = msg.serverContent.userTurn.audioTranscription.text;
+               updateTranscript('user', text, true);
+
+               if (config.onTerminationTriggered && detectTerminationIntent(text)) {
+                   console.log("WebSocket user-level audio transcription termination triggered:", text);
+                   config.onTerminationTriggered();
+               }
             }
           };
 

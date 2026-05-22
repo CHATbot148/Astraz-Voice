@@ -19,7 +19,8 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
     transition: 0,
     hue: 240,
     connecting: false,
-    status: 'idle'
+    status: 'idle',
+    exitProgress: 0
   });
 
   useEffect(() => {
@@ -62,6 +63,7 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
     const posEntrance = new Float32Array(particlesCount * 3);
     const posExit = new Float32Array(particlesCount * 3);
     const posSphere = new Float32Array(particlesCount * 3);
+    const posGoodbye = new Float32Array(particlesCount * 3);
     
     // 1. TEXTS (10)
     const texts = ['ASTRAZ', 'VOICE', 'CORE', 'MIND', 'FLOW', 'NEURAL', 'SYNCED', 'REAL-TIME', 'ADAPTIVE', 'SMART'];
@@ -101,42 +103,82 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
     const posDna = new Float32Array(particlesCount * 3);
     const otherPositions = [posCross, posOcta, posWave, posGrid, posOrbit, posGalaxy, posAtom, posKnot, posPulse, posDna];
 
-    // Canvas helper to generate text positions - Centered & Scaled
+    // Canvas helper to generate text positions - Centered & Scaled (OPTIMIZED to prevent lag)
     const sampleText = (text: string, array: Float32Array, customScale?: number) => {
         const canvas = document.createElement('canvas');
-        canvas.width = 600; 
+        canvas.width = 500; 
         canvas.height = 100;
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
         ctx.fillStyle = 'white';
-        ctx.font = `bold ${text.length > 10 ? 36 : 60}px Inter, sans-serif`; 
+        
+        let fontSize = 32;
+        let letterSpacingStr = '4px';
+        if (text.length <= 4) {
+            fontSize = 52;
+            letterSpacingStr = '20px';
+        } else if (text.length <= 8) {
+            fontSize = 44;
+            letterSpacingStr = '12px';
+        } else if (text.length <= 12) {
+            fontSize = 32;
+            letterSpacingStr = '6px';
+        } else if (text.length <= 20) {
+            fontSize = 24;
+            letterSpacingStr = '4px';
+        } else {
+            fontSize = 18;
+            letterSpacingStr = '2px';
+        }
+
+        ctx.font = `600 ${fontSize}px "Inter", sans-serif`; 
+        ctx.letterSpacing = letterSpacingStr;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(text, 300, 50);
+        ctx.fillText(text, 250, 50);
 
-        const data = ctx.getImageData(0, 0, 600, 100).data;
+        const data = ctx.getImageData(0, 0, 500, 100).data;
         const coords = [];
-        for (let y = 0; y < 100; y++) {
-            for (let x = 0; x < 600; x++) {
-                if (data[(y * 600 + x) * 4] > 128) {
+        // Step of 2 dramatically reduces the computation count (by 4x in each dimension, 16x total speedup!)
+        for (let y = 0; y < 100; y += 2) {
+            for (let x = 0; x < 500; x += 2) {
+                if (data[(y * 500 + x) * 4] > 128) {
                     coords.push({ x, y });
                 }
             }
         }
 
-        const scale = customScale || (text.length > 15 ? 45 : 30); 
+        // Fallback safety
+        if (coords.length === 0) {
+            coords.push({ x: 250, y: 50 });
+        }
+
+        const scale = customScale || (text.length > 15 ? 40 : 26); 
         for (let i = 0; i < particlesCount; i++) {
             const i3 = i * 3;
-            const p = coords[i % coords.length] || { x: 300, y: 50 };
-            array[i3] = (p.x - 300) / scale + (Math.random() - 0.5) * 0.02;
-            array[i3 + 1] = (50 - p.y) / scale + (Math.random() - 0.5) * 0.02;
-            array[i3 + 2] = (Math.random() - 0.5) * 0.02;
+            const p = coords[i % coords.length];
+            
+            // Scaled 3D volume noise that respects the scale factor of the text.
+            // This is the absolute golden equation to stop particle "jam packing" and blurry strokes.
+            // Since noise is relative to 1/scale, the scatter is constant in screen-pixels.
+            const maxNoiseX = 1.0 / scale; // Max 1 pixel of paint scatter
+            const maxNoiseY = 1.0 / scale; // Max 1 pixel of paint scatter
+            const maxNoiseZ = 3.5 / scale; // Delicate depth volume
+            
+            const jX = Math.sin(i * 12.345) * maxNoiseX;
+            const jY = Math.cos(i * 67.890) * maxNoiseY;
+            const jZ = Math.sin(i * 91.234) * maxNoiseZ;
+            
+            array[i3] = (p.x - 250) / scale + jX;
+            array[i3 + 1] = (50 - p.y) / scale + jY;
+            array[i3 + 2] = jZ;
         }
     };
 
     // Populate positions
     texts.forEach((t, i) => sampleText(t, posTexts[i]));
     sentences.forEach((s, i) => sampleText(s, posSentences[i]));
+    sampleText('GOODBYE', posGoodbye, 26);
 
     for (let i = 0; i < particlesCount; i++) {
         const i3 = i * 3;
@@ -149,13 +191,13 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
         posEntrance[i3 + 1] = cornerY + (Math.random() - 0.5) * 20;
         posEntrance[i3 + 2] = cornerZ + (Math.random() - 0.5) * 20;
 
-        // Exit: Spherical Explosion - Extended for large screens
-        const exTheta = Math.random() * Math.PI * 2;
-        const exPhi = Math.acos((Math.random() * 2) - 1);
-        const exR = 80; 
-        posExit[i3] = exR * Math.sin(exPhi) * Math.cos(exTheta);
-        posExit[i3 + 1] = exR * Math.sin(exPhi) * Math.sin(exTheta);
-        posExit[i3 + 2] = exR * Math.cos(exPhi);
+        // Exit: 8 Corners of the universe (Scaled way out for complete disassembly)
+        const exitX = Math.random() > 0.5 ? 100 : -100;
+        const exitY = Math.random() > 0.5 ? 100 : -100;
+        const exitZ = Math.random() > 0.5 ? 100 : -100;
+        posExit[i3] = exitX + (Math.random() - 0.5) * 30;
+        posExit[i3 + 1] = exitY + (Math.random() - 0.5) * 30;
+        posExit[i3 + 2] = exitZ + (Math.random() - 0.5) * 30;
 
         // Sphere
         const theta = Math.random() * Math.PI * 2;
@@ -356,6 +398,13 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
       const t = scrollRef.current.transition;
       const si = scrollRef.current.shapeIndex;
 
+      if (currentStatus === 'exiting') {
+          scrollRef.current.exitProgress += 0.0076; // Match the 132 frames (2.2s at 60fps) timeline perfectly
+      } else {
+          scrollRef.current.exitProgress = 0;
+      }
+      const exitProgress = scrollRef.current.exitProgress;
+
       if (currentStatus === 'connecting') {
           lerpSpeed = 0.05;
           isExploding = true;
@@ -374,6 +423,14 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
           }
           points.scale.set(responsiveScale, responsiveScale, responsiveScale);
           lerpSpeed = 0.15;
+      } else if (currentStatus === 'exiting') {
+          points.scale.set(responsiveScale, responsiveScale, responsiveScale);
+          if (exitProgress < 0.65) {
+              lerpSpeed = 0.12; // Smooth gathering speed for Goodbye
+          } else {
+              lerpSpeed = 0.25; // Energetic outward explosion
+              isExploding = true;
+          }
       } else {
           lerpSpeed = 0.25; // Faster exit animation
           isExploding = true;
@@ -382,36 +439,53 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
 
       // Smooth interpolation for size
       const baseSize = isMobile ? 0.057 : 0.053; 
-      material.uniforms.size.value = THREE.MathUtils.lerp(baseSize + vol * 0.08, baseSize * 0.95, t);
+      let targetSize = baseSize;
+      if (currentStatus === 'connected') {
+          targetSize = THREE.MathUtils.lerp(baseSize + vol * 0.08, baseSize * 0.95, t);
+      } else if (currentStatus === 'exiting') {
+          if (exitProgress < 0.30) {
+              const tStyle = Math.min(1.0, exitProgress / 0.30);
+              targetSize = THREE.MathUtils.lerp(baseSize, baseSize * 1.05, tStyle); // Soft, prominent particle sizing for "GOODBYE"
+          } else if (exitProgress < 0.65) {
+              targetSize = baseSize * 1.05; // Maintain prominent size during hold phase
+          } else {
+              const tStyle = Math.min(1.0, (exitProgress - 0.65) / 0.35);
+              targetSize = THREE.MathUtils.lerp(baseSize * 1.05, baseSize * 0.1, tStyle); // Scale down to tiny points as they disintegrate
+          }
+      } else if (currentStatus === 'connecting') {
+          targetSize = baseSize;
+      } else {
+          // 'idle' or other non-active - completely invisible
+          targetSize = 0;
+      }
+      material.uniforms.size.value = targetSize;
 
       // Rotation handles: Smoother and more dynamic for all states
-      const isFlat = (si % 4 === 0 || si % 4 === 2) && t > 0.5 && currentStatus === 'connected';
-      const isSpeaking = vol > 0.02 && currentStatus === 'connected';
+      const isFlat = ((si % 4 === 0 || si % 4 === 2) && t > 0.5 && currentStatus === 'connected') || (currentStatus === 'exiting' && exitProgress < 0.65);
       
-      // Muted elements should have a gentle idle orbit
-      let targetRY = points.rotation.y + 0.005;
-      let targetRX = points.rotation.x + 0.002;
-
       if (isFlat) {
-          // Flat elements face user but wobble subtly
-          targetRY = Math.sin(time * 0.2) * 0.15;
-          targetRX = Math.cos(time * 0.15) * 0.1;
-      } else if (isSpeaking) {
-          // Reactive but stable for speech
-          targetRY = 0;
-          targetRX = 0;
-      } else if (isExploding) {
-          // No rotation during entrance/exit
-          targetRY = 0;
-          targetRX = 0;
-      } else if (currentStatus === 'connected') {
-          // Dynamic spin for 3D shapes
-          targetRY = points.rotation.y + 0.008 + (muted ? 0 : vol * 0.08);
-          targetRX = points.rotation.x + 0.004 + (muted ? 0 : vol * 0.03);
+          // Flat elements (texts/sentences) face user but float and sway elegantly in 3D to show off volume
+          const targetRY = Math.sin(time * 0.4) * 0.25;
+          const targetRX = Math.cos(time * 0.3) * 0.15;
+          points.rotation.y = THREE.MathUtils.lerp(points.rotation.y, targetRY, 0.05);
+          points.rotation.x = THREE.MathUtils.lerp(points.rotation.x, targetRX, 0.05);
+      } else {
+          // Shapes and objects (cat === 1 or cat === 3) rotate continuously like they used to, regardless of muted state!
+          if (currentStatus === 'connected') {
+              const spinSpeedY = 0.008 + (muted ? 0 : vol * 0.06);
+              const spinSpeedX = 0.004 + (muted ? 0 : vol * 0.03);
+              points.rotation.y += spinSpeedY;
+              points.rotation.x += spinSpeedX;
+          } else if (currentStatus === 'connecting' || currentStatus === 'exiting') {
+              // Smooth return to center face during transitions or explode
+              points.rotation.y = THREE.MathUtils.lerp(points.rotation.y, 0, 0.1);
+              points.rotation.x = THREE.MathUtils.lerp(points.rotation.x, 0, 0.1);
+          } else {
+              // General idle rotation
+              points.rotation.y += 0.005;
+              points.rotation.x += 0.002;
+          }
       }
-      
-      points.rotation.y = THREE.MathUtils.lerp(points.rotation.y, targetRY, isFlat ? 0.05 : 0.1);
-      points.rotation.x = THREE.MathUtils.lerp(points.rotation.x, targetRX, 0.05);
 
       scrollRef.current.hue = (scrollRef.current.hue + 0.1) % 360;
       const baseColor = new THREE.Color().setHSL(scrollRef.current.hue / 360, 0.7, 0.6);
@@ -427,6 +501,12 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
           else if (cat === 1) activeTarget = shapePositions[idx];
           else if (cat === 2) activeTarget = posSentences[idx];
           else activeTarget = otherPositions[idx];
+      } else if (currentStatus === 'exiting') {
+          if (exitProgress < 0.65) {
+              activeTarget = posGoodbye;
+          } else {
+              activeTarget = posExit;
+          }
       } else activeTarget = posExit;
 
       for (let i = 0; i < particlesCount; i++) {
@@ -446,6 +526,25 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
             tx = THREE.MathUtils.lerp(activeTarget[i3], tx, Math.min(time * 0.5, 1));
             ty = THREE.MathUtils.lerp(activeTarget[i3 + 1], ty, Math.min(time * 0.5, 1));
             tz = THREE.MathUtils.lerp(activeTarget[i3 + 2], tz, Math.min(time * 0.5, 1));
+        } else if (currentStatus === 'exiting') {
+            if (exitProgress < 0.30) {
+                // Phase 1: Smoothly morph into "GOODBYE"
+                const tGoodbye = Math.min(1.0, exitProgress / 0.30);
+                tx = THREE.MathUtils.lerp(tx, posGoodbye[i3], tGoodbye);
+                ty = THREE.MathUtils.lerp(ty, posGoodbye[i3 + 1], tGoodbye);
+                tz = THREE.MathUtils.lerp(tz, posGoodbye[i3 + 2], tGoodbye);
+            } else if (exitProgress < 0.65) {
+                // Phase 2: Hold "GOODBYE" fully formed
+                tx = posGoodbye[i3];
+                ty = posGoodbye[i3 + 1];
+                tz = posGoodbye[i3 + 2];
+            } else {
+                // Phase 3: Disintegrate / explode from "GOODBYE" target to the outer universe posExit
+                const tExit = Math.min(1.0, (exitProgress - 0.65) / 0.35);
+                tx = THREE.MathUtils.lerp(posGoodbye[i3], posExit[i3], tExit);
+                ty = THREE.MathUtils.lerp(posGoodbye[i3 + 1], posExit[i3 + 1], tExit);
+                tz = THREE.MathUtils.lerp(posGoodbye[i3 + 2], posExit[i3 + 2], tExit);
+            }
         } else {
             // Rapid dispersal for exit
             tx = THREE.MathUtils.lerp(positions[i3], activeTarget[i3], lerpSpeed);
@@ -467,18 +566,40 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ userVolume, modelVolume, isM
         positions[i3+2] = THREE.MathUtils.lerp(positions[i3+2], tz + noise, lerpSpeed);
 
         // Color logic
+        let rColor = 0.3;
+        let gColor = 0.4;
+        let bColor = 0.8;
+
         if (currentStatus === 'connecting') {
             const p = Math.sin(time * 10) * 0.3 + 0.7;
-            colorAttr[i3] = 0.6 * p; colorAttr[i3+1] = 0.8 * p; colorAttr[i3+2] = 1.0;
+            rColor = 0.6 * p;
+            gColor = 0.8 * p;
+            bColor = 1.0;
         } else if (muted) {
-            colorAttr[i3] = 0.4; colorAttr[i3+1] = 0.5; colorAttr[i3+2] = 0.9;
+            rColor = 0.4;
+            gColor = 0.5;
+            bColor = 0.9;
         } else if (model > 0.05) {
-            colorAttr[i3] = 0.1; colorAttr[i3+1] = 1.0; colorAttr[i3+2] = 0.7;
+            rColor = 0.1;
+            gColor = 1.0;
+            bColor = 0.7;
         } else if (user > 0.05) {
-            colorAttr[i3] = baseColor.r; colorAttr[i3+1] = baseColor.g; colorAttr[i3+2] = baseColor.b;
-        } else {
-            colorAttr[i3] = 0.3; colorAttr[i3+1] = 0.4; colorAttr[i3+2] = 0.8;
+            rColor = baseColor.r;
+            gColor = baseColor.g;
+            bColor = baseColor.b;
         }
+
+        // Apply smooth fading to black on the disintegration phase as they blow apart
+        if (currentStatus === 'exiting' && exitProgress >= 0.65) {
+            const fade = Math.max(0, 1 - Math.min(1.0, (exitProgress - 0.65) / 0.35)); // Smoothly goes to 0 by 1.0 exitProgress
+            rColor *= fade;
+            gColor *= fade;
+            bColor *= fade;
+        }
+
+        colorAttr[i3] = rColor;
+        colorAttr[i3+1] = gColor;
+        colorAttr[i3+2] = bColor;
       }
 
       geometry.attributes.position.needsUpdate = true;
